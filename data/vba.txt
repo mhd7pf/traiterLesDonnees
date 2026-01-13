@@ -1,0 +1,299 @@
+Option Explicit
+
+Sub Analyse_Reseau_Complet_Clean()
+
+    Dim wsSrc As Worksheet, wsRes As Worksheet
+    Dim lastRow As Long, i As Long, outRow As Long
+    Dim t As Variant, s As String, d As String, p As Long, f As String, L As Long
+    Dim typeAtt As String, commentaire As String
+    
+    '--- Feuille d'origine (NE PAS MODIFIER) ---
+    Set wsSrc = ThisWorkbook.Sheets("logs_extraits")
+    
+    '--- Feuille Résumé_Attaque temporaire : création si besoin ---
+    On Error Resume Next
+    Set wsRes = ThisWorkbook.Sheets("Résumé_Attaque")
+    On Error GoTo 0
+    If wsRes Is Nothing Then
+        Set wsRes = ThisWorkbook.Worksheets.Add(After:=wsSrc)
+        wsRes.Name = "Résumé_Attaque"
+    Else
+        wsRes.Cells.Clear
+    End If
+    
+    '--- En-têtes Résumé_Attaque ---
+    wsRes.Range("A1:H1").Value = Array("TYPE_ATTAQUE", "TIME", "SOURCE", _
+                                       "DESTINATION", "PORT", "FLAGS", _
+                                       "LENGTH", "COMMENTAIRE")
+    outRow = 2
+    
+    '--- Parcours des lignes de logs_extraits ---
+    lastRow = wsSrc.Cells(wsSrc.Rows.Count, "A").End(xlUp).Row
+    
+    For i = 2 To lastRow
+        
+        t = wsSrc.Cells(i, 1).Value
+        s = CStr(wsSrc.Cells(i, 2).Value)
+        d = CStr(wsSrc.Cells(i, 3).Value)
+        p = Val(wsSrc.Cells(i, 4).Value)
+        f = CStr(wsSrc.Cells(i, 5).Value)
+        L = Val(wsSrc.Cells(i, 6).Value)
+        
+        typeAtt = ""
+        commentaire = ""
+        
+        '--- 1) Port Scan ---
+        If EstPortScan(wsSrc, i) Then
+            typeAtt = "PortScan"
+            commentaire = "Série de paquets SYN sur des ports consécutifs vers le même serveur."
+        End If
+        
+        '--- 2) DoS ---
+        If typeAtt = "" And EstDoS(wsSrc, i) Then
+            typeAtt = "DoS"
+            commentaire = "Grand nombre de paquets dans la même seconde pour un même couple."
+        End If
+        
+        '--- 3) SSH sensible ---
+        If typeAtt = "" And EstSSHsensible(s, d, p) Then
+            typeAtt = "SSH_Sensible"
+            commentaire = "Connexion SSH sur port non standard."
+        End If
+        
+        '--- Si une attaque détectée, on copie la ligne ---
+        If typeAtt <> "" Then
+            wsRes.Cells(outRow, 1).Value = typeAtt
+            wsRes.Cells(outRow, 2).Value = t
+            wsRes.Cells(outRow, 3).Value = s
+            wsRes.Cells(outRow, 4).Value = d
+            wsRes.Cells(outRow, 5).Value = p
+            wsRes.Cells(outRow, 6).Value = f
+            wsRes.Cells(outRow, 7).Value = L
+            wsRes.Cells(outRow, 8).Value = commentaire
+            outRow = outRow + 1
+        End If
+        
+    Next i
+    
+    wsRes.Columns.AutoFit
+    
+    '--- Création des TCD filtrées ---
+    Call Creer_TCD_PortScan(wsRes)
+    Call Creer_TCD_DoS(wsRes)
+    Call Creer_TCD_SSH(wsRes)
+    
+    '--- Création de la synthèse ---
+    Call Creer_Synthese(wsRes)
+    
+    '--- Création des graphiques ---
+    Call Creer_Graphiques_Final()
+    
+    '--- Suppression de Résumé_Attaque ---
+    On Error Resume Next
+    Application.DisplayAlerts = False
+    wsRes.Delete
+    Application.DisplayAlerts = True
+    On Error GoTo 0
+    
+    MsgBox "Analyse complète terminée." & vbCrLf & _
+           "Consultez les onglets : Onglet_PortScan, Onglet_DoS, Onglet_SSH_Sensible, Synthese, Graphiques", vbInformation
+
+End Sub
+
+'=== FONCTIONS DE DÉTECTION ===
+
+Function EstPortScan(ws As Worksheet, i As Long) As Boolean
+    If ws.Cells(i, 5).Value <> "S" Then Exit Function
+    If i <= 2 Then Exit Function
+    
+    Dim sameSrc As Boolean, sameDst As Boolean, diffPort As Long
+    sameSrc = (ws.Cells(i, 2).Value = ws.Cells(i - 1, 2).Value)
+    sameDst = (ws.Cells(i, 3).Value = ws.Cells(i - 1, 3).Value)
+    diffPort = Val(ws.Cells(i, 4).Value) - Val(ws.Cells(i - 1, 4).Value)
+    
+    If sameSrc And sameDst And diffPort = 1 Then
+        EstPortScan = True
+    End If
+End Function
+
+Function EstDoS(ws As Worksheet, i As Long) As Boolean
+    Dim t As Variant, s As String, d As String
+    Dim countPaquets As Long, lastRow As Long
+    
+    t = ws.Cells(i, 1).Value
+    s = CStr(ws.Cells(i, 2).Value)
+    d = CStr(ws.Cells(i, 3).Value)
+    
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    
+    countPaquets = Application.WorksheetFunction.CountIfs( _
+                        ws.Range("A2:A" & lastRow), t, _
+                        ws.Range("B2:B" & lastRow), s, _
+                        ws.Range("C2:C" & lastRow), d)
+    
+    If countPaquets > 50 Then
+        EstDoS = True
+    End If
+End Function
+
+Function EstSSHsensible(src As String, dst As String, port As Long) As Boolean
+    If (InStr(1, src, "BP-Linux8.ssh", vbTextCompare) > 0 _
+        Or InStr(1, dst, "BP-Linux8.ssh", vbTextCompare) > 0) _
+        And port <> 22 Then
+        EstSSHsensible = True
+    End If
+End Function
+
+'=== CRÉATION DES TCD ===
+
+Sub Creer_TCD_PortScan(wsRes As Worksheet)
+    Dim wsTCD As Worksheet, lastRow As Long
+    
+    On Error Resume Next
+    Set wsTCD = ThisWorkbook.Sheets("Onglet_PortScan")
+    On Error GoTo 0
+    If wsTCD Is Nothing Then
+        Set wsTCD = ThisWorkbook.Worksheets.Add(After:=wsRes)
+        wsTCD.Name = "Onglet_PortScan"
+    Else
+        wsTCD.Cells.Clear
+    End If
+    
+    lastRow = wsRes.Cells(wsRes.Rows.Count, "A").End(xlUp).Row
+    wsRes.Range("A1:H1").AutoFilter
+    wsRes.Range("A1").AutoFilter Field:=1, Criteria1:="PortScan"
+    
+    wsRes.Range("A1:H" & lastRow).SpecialCells(xlCellTypeVisible).Copy
+    wsTCD.Range("A1").PasteSpecial Paste:=xlPasteValues
+    
+    wsRes.Range("A1").AutoFilter
+    wsTCD.Columns.AutoFit
+    Application.CutCopyMode = False
+    
+End Sub
+
+Sub Creer_TCD_DoS(wsRes As Worksheet)
+    Dim wsTCD As Worksheet, lastRow As Long
+    
+    On Error Resume Next
+    Set wsTCD = ThisWorkbook.Sheets("Onglet_DoS")
+    On Error GoTo 0
+    If wsTCD Is Nothing Then
+        Set wsTCD = ThisWorkbook.Worksheets.Add(After:=wsRes)
+        wsTCD.Name = "Onglet_DoS"
+    Else
+        wsTCD.Cells.Clear
+    End If
+    
+    lastRow = wsRes.Cells(wsRes.Rows.Count, "A").End(xlUp).Row
+    wsRes.Range("A1:H1").AutoFilter
+    wsRes.Range("A1").AutoFilter Field:=1, Criteria1:="DoS"
+    
+    wsRes.Range("A1:H" & lastRow).SpecialCells(xlCellTypeVisible).Copy
+    wsTCD.Range("A1").PasteSpecial Paste:=xlPasteValues
+    
+    wsRes.Range("A1").AutoFilter
+    wsTCD.Columns.AutoFit
+    Application.CutCopyMode = False
+    
+End Sub
+
+Sub Creer_TCD_SSH(wsRes As Worksheet)
+    Dim wsTCD As Worksheet, lastRow As Long
+    
+    On Error Resume Next
+    Set wsTCD = ThisWorkbook.Sheets("Onglet_SSH_Sensible")
+    On Error GoTo 0
+    If wsTCD Is Nothing Then
+        Set wsTCD = ThisWorkbook.Worksheets.Add(After:=wsRes)
+        wsTCD.Name = "Onglet_SSH_Sensible"
+    Else
+        wsTCD.Cells.Clear
+    End If
+    
+    lastRow = wsRes.Cells(wsRes.Rows.Count, "A").End(xlUp).Row
+    wsRes.Range("A1:H1").AutoFilter
+    wsRes.Range("A1").AutoFilter Field:=1, Criteria1:="SSH_Sensible"
+    
+    wsRes.Range("A1:H" & lastRow).SpecialCells(xlCellTypeVisible).Copy
+    wsTCD.Range("A1").PasteSpecial Paste:=xlPasteValues
+    
+    wsRes.Range("A1").AutoFilter
+    wsTCD.Columns.AutoFit
+    Application.CutCopyMode = False
+    
+End Sub
+
+'=== CRÉATION DE LA SYNTHÈSE ===
+
+Sub Creer_Synthese(wsRes As Worksheet)
+    Dim wsSyn As Worksheet, lastRow As Long
+    Dim countPS, countDos, countSSH As Long
+    
+    On Error Resume Next
+    Set wsSyn = ThisWorkbook.Sheets("Synthese")
+    On Error GoTo 0
+    If wsSyn Is Nothing Then
+        Set wsSyn = ThisWorkbook.Worksheets.Add(After:=wsRes)
+        wsSyn.Name = "Synthese"
+    Else
+        wsSyn.Cells.Clear
+    End If
+    
+    lastRow = wsRes.Cells(wsRes.Rows.Count, "A").End(xlUp).Row
+    
+    countPS = Application.WorksheetFunction.CountIf(wsRes.Range("A2:A" & lastRow), "PortScan")
+    countDos = Application.WorksheetFunction.CountIf(wsRes.Range("A2:A" & lastRow), "DoS")
+    countSSH = Application.WorksheetFunction.CountIf(wsRes.Range("A2:A" & lastRow), "SSH_Sensible")
+    
+    wsSyn.Range("A1:B1").Value = Array("TYPE_ATTAQUE", "NOMBRE_PAQUETS")
+    wsSyn.Range("A2:B2").Value = Array("PortScan", countPS)
+    wsSyn.Range("A3:B3").Value = Array("DoS", countDos)
+    wsSyn.Range("A4:B4").Value = Array("SSH_Sensible", countSSH)
+    
+    wsSyn.Range("A1:B4").Font.Bold = True
+    wsSyn.Columns.AutoFit
+    
+End Sub
+
+'=== CRÉATION DES GRAPHIQUES ===
+
+Sub Creer_Graphiques_Final()
+    Dim wsGraph As Worksheet, wsSyn As Worksheet
+    Dim chartObj As ChartObject
+    
+    On Error Resume Next
+    Set wsGraph = ThisWorkbook.Sheets("Graphiques")
+    On Error GoTo 0
+    If wsGraph Is Nothing Then
+        Set wsGraph = ThisWorkbook.Worksheets.Add()
+        wsGraph.Name = "Graphiques"
+    Else
+        wsGraph.Cells.Clear
+        For Each chartObj In wsGraph.ChartObjects
+            chartObj.Delete
+        Next chartObj
+    End If
+    
+    Set wsSyn = ThisWorkbook.Sheets("Synthese")
+    
+    '--- Graphique 1 : Colonnes ---
+    Set chartObj = wsGraph.ChartObjects.Add(Left:=10, Top:=10, Width:=400, Height:=300)
+    With chartObj.Chart
+        .ChartType = xlColumnClustered
+        .SetSourceData Source:=wsSyn.Range("A1:B4")
+        .HasTitle = True
+        .ChartTitle.Text = "Nombre d'attaques détectées par type"
+        .Axes(xlCategory).HasMajorGridlines = False
+    End With
+    
+    '--- Graphique 2 : Donut ---
+    Set chartObj = wsGraph.ChartObjects.Add(Left:=420, Top:=10, Width:=400, Height:=300)
+    With chartObj.Chart
+        .ChartType = xlDoughnut
+        .SetSourceData Source:=wsSyn.Range("A1:B4")
+        .HasTitle = True
+        .ChartTitle.Text = "Répartition des attaques"
+    End With
+    
+End Sub
