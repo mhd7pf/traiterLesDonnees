@@ -11,7 +11,7 @@ Ce rapport présente les activités suspectes détectées à partir du fichier t
 
 ### Diagramme des attaques par type
 
-![Nombre d'attaques par type](graph.png)
+![Nombre d'attaques par type](graphb.png)
 
 ## Port scan
 
@@ -19,7 +19,7 @@ Un port scan correspond à une série de paquets TCP avec le drapeau SYN envoyé
 
 ### Visualisation du port scan
 
-![Port scan : ports testés dans le temps](ports.png)
+![Port scan : ports testés dans le temps](graphc.png)
 
 ### Exemples de paquets détectés
 
@@ -42,7 +42,7 @@ Un début de déni de service est caractérisé par un volume anormalement élev
 
 ### Graphique du volume de paquets DoS
 
-![DoS : volume de paquets dans le temps](dos.png)
+![DoS : volume de paquets dans le temps](graph_dos_volume.png)
 
 ### Exemples de paquets détectés
 

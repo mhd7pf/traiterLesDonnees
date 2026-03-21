@@ -69,7 +69,7 @@ def generer_markdown(df_ps, df_dos, df_ssh) -> str:
 
     # Diagramme global
     lignes.append("### Diagramme des attaques par type\n\n")
-    lignes.append("![Nombre d'attaques par type](graph_nb_attaques.png)\n\n")
+    lignes.append("![Nombre d'attaques par type](graphb.png)\n\n")
 
     # =====================
     # Port scan
@@ -83,7 +83,7 @@ def generer_markdown(df_ps, df_dos, df_ssh) -> str:
 
     lignes.append("### Visualisation du port scan\n\n")
     lignes.append(
-        "![Port scan : ports testés dans le temps](graph_portscan_ports.png)\n\n"
+        "![Port scan : ports testés dans le temps](graphc.png)\n\n"
     )
 
     if nb_ps > 0:
